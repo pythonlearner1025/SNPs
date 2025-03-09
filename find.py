@@ -1,69 +1,16 @@
-def ensure_vcf_index(vcf_file):
-    """
-    Check if VCF index file exists, and create it if it doesn't.
-    Returns True if indexing was successful or index already exists.
-    """
-    # Check for .tbi (tabix) index for gzipped VCF
-    index_file = vcf_file + ".tbi"
-    if os.path.exists(index_file):
-        print(f"VCF index file {index_file} already exists.")
-        return True
-    
-    # Check for .csi index (default for bcftools)
-    csi_index = vcf_file + ".csi"
-    if os.path.exists(csi_index):
-        print(f"VCF index file {csi_index} already exists.")
-        return True
-    
-    # Create index
-    print(f"Creating index for {vcf_file}...")
-    
-    # Determine if file is bgzipped by checking file signature
-    is_bgzipped = False
-    try:
-        with open(vcf_file, 'rb') as f:
-            # Check for gzip magic number (first two bytes)
-            if f.read(2) == b'\x1f\x8b':
-                is_bgzipped = True
-    except Exception as e:
-        print(f"Error checking if file is gzipped: {e}")
-        return False
-    
-    # Index command depends on whether file is compressed
-    if is_bgzipped:
-        cmd = f"bcftools index {vcf_file}"
-    else:
-        # For uncompressed VCF, we need to compress it first
-        print("VCF file is not compressed. Compressing first...")
-        compressed_vcf = vcf_file + ".gz"
-        compress_cmd = f"bgzip -c {vcf_file} > {compressed_vcf}"
-        result = run_command(compress_cmd)
-        if not result:
-            print("Compression failed.")
-            return False
-        
-        # Update vcf_file to point to the compressed file
-        vcf_file = compressed_vcf
-        cmd = f"bcftools index {vcf_file}"
-    
-    # Run the indexing command
-    result = run_command(cmd)
-    if result is None:
-        print("Indexing failed.")
-        return False
-    
-    print("Indexing completed successfully.")
-    return True#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
-Extract SNPs from specific genes in a VCF file and save to text files.
-This script extracts variants from four genes and saves only the SNPs to separate text files.
-It uses gene FASTA files to accurately predict amino acid changes in the format XposY.
+Process multiple VCF files to extract SNPs for specific genes and annotate them with amino acid changes.
+The script uses FASTA files for each gene to determine amino acid changes.
+
+Output files are named with the pattern: {vcf_filename_prefix}_{gene_name}_snps.txt
 """
 
 import subprocess
 import os
 import sys
 import re
+import glob
 from collections import defaultdict
 
 # Genetic code - DNA codon to amino acid mapping
@@ -119,7 +66,17 @@ def translate_dna(dna_sequence):
             protein += amino_acid
     return protein
 
-def get_amino_acid_change(gene_sequence, position, ref, alt, gene_start):
+def complement_base(base):
+    """Return the complement of a nucleotide base."""
+    complements = {'A': 'T', 'T': 'A', 'G': 'C', 'C': 'G', 
+                  'a': 't', 't': 'a', 'g': 'c', 'c': 'g'}
+    return complements.get(base, base)
+
+def reverse_complement(sequence):
+    """Return the reverse complement of a DNA sequence."""
+    return ''.join(complement_base(base) for base in reversed(sequence))
+
+def get_amino_acid_change(gene_sequence, position, ref, alt, gene_start, strand="+"):
     """
     Calculate the amino acid change based on the genomic position and the gene sequence.
     
@@ -129,12 +86,18 @@ def get_amino_acid_change(gene_sequence, position, ref, alt, gene_start):
         ref: Reference allele
         alt: Alternate allele
         gene_start: Start position of the gene in the genome
+        strand: Gene strand ("+" or "-")
         
     Returns:
-        String representing amino acid change in XposY format, or None if not a coding change
+        String representing amino acid change in XposY format, or appropriate message
     """
-    # Calculate position within the gene sequence
-    relative_position = position - gene_start
+    # Handle negative strand genes differently
+    if strand == "-":
+        # For negative strand, the gene_start should be the end position
+        relative_position = gene_start - position
+    else:
+        # For positive strand, calculate position from the start
+        relative_position = position - gene_start
     
     # Check if position is within the gene sequence
     if relative_position < 0 or relative_position >= len(gene_sequence):
@@ -165,6 +128,92 @@ def get_amino_acid_change(gene_sequence, position, ref, alt, gene_start):
         return f"{ref_aa}{codon_position+1}{alt_aa}"
     else:
         return f"{ref_aa}{codon_position+1}{alt_aa} (synonymous)"
+
+def ensure_vcf_index(vcf_file):
+    """
+    Check if VCF index file exists, and create it if it doesn't.
+    Returns True if indexing was successful or index already exists.
+    """
+    # Check for .tbi (tabix) index for gzipped VCF
+    index_file = vcf_file + ".tbi"
+    if os.path.exists(index_file):
+        print(f"VCF index file {index_file} already exists.")
+        return True
+    
+    # Check for .csi index (default for bcftools)
+    csi_index = vcf_file + ".csi"
+    if os.path.exists(csi_index):
+        print(f"VCF index file {csi_index} already exists.")
+        return True
+    
+    # Create index
+    print(f"Creating index for {vcf_file}...")
+    
+    # Determine if file is bgzipped by checking file signature
+    is_bgzipped = False
+    try:
+        with open(vcf_file, 'rb') as f:
+            # Check for gzip magic number (first two bytes)
+            if f.read(2) == b'\x1f\x8b':
+                is_bgzipped = True
+    except Exception as e:
+        print(f"Error checking if file is gzipped: {e}")
+        return False
+    
+    # Index command depends on whether file is compressed
+    if is_bgzipped:
+        cmd = f"bcftools index {vcf_file}"
+    else:
+        # For uncompressed VCF, we need to compress it first
+        print("VCF file is not compressed. Compressing first...")
+        compressed_vcf = vcf_file + ".gz"
+        compress_cmd = f"bgzip -c {vcf_file} > {compressed_vcf}"
+        result = run_command(compress_cmd)
+        if not result:
+            print("Compression failed.")
+            return False
+        
+        # Update vcf_file to point to the compressed file
+        vcf_file = compressed_vcf
+        cmd = f"bcftools index {vcf_file}"
+    
+    # Run the indexing command
+    result = run_command(cmd)
+    if result is None:
+        print("Indexing failed.")
+        return False
+    
+    print("Indexing completed successfully.")
+    return True
+
+def get_vcf_chromosomes(vcf_file):
+    """
+    Get chromosome naming style from VCF file.
+    Returns a tuple: (uses_chr_prefix, is_hg38)
+    """
+    # Check chromosome naming in VCF
+    check_cmd = f"bcftools view -h {vcf_file} | grep contig"
+    contig_info = run_command(check_cmd)
+    
+    # Determine if chromosomes use "chr" prefix
+    use_chr_prefix = False
+    if contig_info and "chr" in contig_info:
+        use_chr_prefix = True
+    
+    # Try to determine if VCF is using hg19 or hg38
+    check_variant_cmd = f"bcftools view {vcf_file} | head -n 100"
+    sample_variants = run_command(check_variant_cmd)
+    
+    use_hg38 = True  # Default to hg38
+    if sample_variants:
+        # Simple heuristic
+        if "7:34694" in sample_variants or "10:1158043" in sample_variants:
+            use_hg38 = False
+            print(f"Detected hg19/GRCh37 coordinates in VCF file: {vcf_file}")
+        else:
+            print(f"Assuming hg38/GRCh38 coordinates in VCF file: {vcf_file}")
+    
+    return (use_chr_prefix, use_hg38)
 
 def load_gene_info():
     """
@@ -210,21 +259,37 @@ def load_gene_info():
     
     return genes
 
-def extract_snps_with_aa_changes(vcf_file, use_hg38=True, chr_prefix=""):
+def process_vcf_file(vcf_file, output_dir="gene_variants"):
     """
-    Extract SNPs for each gene and annotate with amino acid changes.
+    Process a single VCF file to extract SNPs for all genes.
     
     Args:
         vcf_file: Path to the VCF file
-        use_hg38: Whether to use hg38 coordinates (True) or hg19 (False)
-        chr_prefix: Chromosome prefix ("chr" or "")
+        output_dir: Directory to write output files to
     """
-    # Create output directory
-    output_dir = "gene_variants"
-    os.makedirs(output_dir, exist_ok=True)
+    print(f"\nProcessing VCF file: {vcf_file}")
+    
+    # Get base file name for output prefixing
+    vcf_basename = os.path.basename(vcf_file)
+    # Remove extension(s) (.vcf, .vcf.gz, etc.)
+    vcf_prefix = vcf_basename
+    if vcf_prefix.endswith('.gz'):
+        vcf_prefix = vcf_prefix[:-3]
+    if vcf_prefix.endswith('.vcf'):
+        vcf_prefix = vcf_prefix[:-4]
+    
+    # Ensure VCF file is indexed
+    is_indexed = ensure_vcf_index(vcf_file)
+    
+    # Determine chromosome naming and genome build
+    use_chr_prefix, use_hg38 = get_vcf_chromosomes(vcf_file)
+    chr_prefix = "chr" if use_chr_prefix else ""
     
     # Load gene information
     genes = load_gene_info()
+    
+    # Create output directory
+    os.makedirs(output_dir, exist_ok=True)
     
     # Process each gene
     for gene_name, gene_data in genes.items():
@@ -236,17 +301,16 @@ def extract_snps_with_aa_changes(vcf_file, use_hg38=True, chr_prefix=""):
         sequence = gene_data.get("sequence")
         strand = gene_data.get("strand", "+")
         
-        print(f"\nProcessing {gene_name} at {chrom}:{start}-{end}")
+        print(f"Processing {gene_name} at {chrom}:{start}-{end}")
         
         if not sequence:
             print(f"Skipping {gene_name} - sequence not available")
             continue
             
         # Extract the gene's SNPs to a temporary file
-        temp_vcf = os.path.join(output_dir, f"{gene_name}_temp.vcf")
+        temp_vcf = os.path.join(output_dir, f"temp_{vcf_prefix}_{gene_name}.vcf")
         
         # Use indexed access if possible (faster)
-        is_indexed = os.path.exists(vcf_file + ".tbi") or os.path.exists(vcf_file + ".csi")
         if is_indexed:
             extract_cmd = f"bcftools view -r {chrom}:{start}-{end} {vcf_file} > {temp_vcf}"
         else:
@@ -257,20 +321,22 @@ def extract_snps_with_aa_changes(vcf_file, use_hg38=True, chr_prefix=""):
         
         if not os.path.exists(temp_vcf) or os.path.getsize(temp_vcf) == 0:
             print(f"No variants found for {gene_name} or extraction failed.")
+            if os.path.exists(temp_vcf):
+                os.remove(temp_vcf)
             continue
             
-        # For negative strand genes, we need to reverse complement the sequence
+        # For negative strand genes, we need to use reverse complemented sequence
         working_sequence = sequence
         if strand == "-":
             working_sequence = reverse_complement(sequence)
         
         # Process SNPs and add amino acid changes
-        output_file = os.path.join(output_dir, f"{gene_name}_snps.txt")
+        output_file = os.path.join(output_dir, f"{vcf_prefix}_{gene_name}_snps.txt")
         snp_count = 0
         
         with open(temp_vcf, 'r') as vcf, open(output_file, 'w') as outfile:
             # Write header to output file
-            outfile.write(f"# SNPs for {gene_name} ({chrom}:{start}-{end})\n")
+            outfile.write(f"# SNPs for {gene_name} ({chrom}:{start}-{end}) from {vcf_basename}\n")
             outfile.write("# CHROM\tPOS\tREF\tALT\tQUAL\tAA_CHANGE\n")
             
             for line in vcf:
@@ -294,6 +360,9 @@ def extract_snps_with_aa_changes(vcf_file, use_hg38=True, chr_prefix=""):
                     if strand == "-":
                         working_ref = complement_base(ref)
                         working_alt = complement_base(alt)
+                        gene_pos = gene_data[build]["end"]  # Use end position for negative strand
+                    else:
+                        gene_pos = gene_data[build]["start"]  # Use start position for positive strand
                     
                     # Calculate amino acid change
                     aa_change = get_amino_acid_change(
@@ -301,7 +370,8 @@ def extract_snps_with_aa_changes(vcf_file, use_hg38=True, chr_prefix=""):
                         pos, 
                         working_ref, 
                         working_alt, 
-                        start if strand == "+" else end
+                        gene_pos,
+                        strand
                     )
                     
                     outfile.write(f"{chrom_from_vcf}\t{pos}\t{ref}\t{alt}\t{qual}\t{aa_change}\n")
@@ -311,60 +381,27 @@ def extract_snps_with_aa_changes(vcf_file, use_hg38=True, chr_prefix=""):
         if os.path.exists(temp_vcf):
             os.remove(temp_vcf)
             
-        print(f"Extracted {snp_count} SNPs for {gene_name}")
-
-def complement_base(base):
-    """Return the complement of a nucleotide base."""
-    complements = {'A': 'T', 'T': 'A', 'G': 'C', 'C': 'G', 
-                  'a': 't', 't': 'a', 'g': 'c', 'c': 'g'}
-    return complements.get(base, base)
-
-def reverse_complement(sequence):
-    """Return the reverse complement of a DNA sequence."""
-    return ''.join(complement_base(base) for base in reversed(sequence))
+        print(f"Extracted {snp_count} SNPs for {gene_name} from {vcf_basename}")
 
 def main():
-    # VCF file to process
-    vcf_file = "output.vcf.gz"
+    # Create output directory
+    output_dir = "gene_variants"
+    os.makedirs(output_dir, exist_ok=True)
     
-    # Check if VCF file exists
-    if not os.path.exists(vcf_file):
-        print(f"Error: {vcf_file} not found.")
+    # Get all VCF files in current directory
+    vcf_files = glob.glob("*.vcf") + glob.glob("*.vcf.gz")
+    
+    if not vcf_files:
+        print("No VCF files found in the current directory.")
         sys.exit(1)
     
-    # Ensure VCF file is indexed
-    if not ensure_vcf_index(vcf_file):
-        print("Failed to index VCF file. Using slower region extraction.")
+    print(f"Found {len(vcf_files)} VCF files to process.")
     
-    # Check chromosome naming in VCF
-    check_cmd = "bcftools view -h output.vcf.gz | grep contig"
-    contig_info = run_command(check_cmd)
+    # Process each VCF file
+    for vcf_file in vcf_files:
+        process_vcf_file(vcf_file, output_dir)
     
-    # Determine if chromosomes use "chr" prefix
-    use_chr_prefix = False
-    if contig_info and "chr" in contig_info:
-        use_chr_prefix = True
-    
-    chr_prefix = "chr" if use_chr_prefix else ""
-    
-    # Try to determine if VCF is using hg19 or hg38
-    # This is a simplistic approach - might need refinement
-    check_variant_cmd = "bcftools view output.vcf.gz | head -n 100"
-    sample_variants = run_command(check_variant_cmd)
-    
-    use_hg38 = True  # Default to hg38
-    if sample_variants:
-        # Simple heuristic - you might want to improve this
-        if "7:34694" in sample_variants or "10:1158043" in sample_variants:
-            use_hg38 = False
-            print("Detected hg19/GRCh37 coordinates in VCF")
-        else:
-            print("Assuming hg38/GRCh38 coordinates in VCF")
-    
-    # Extract SNPs with amino acid changes
-    extract_snps_with_aa_changes(vcf_file, use_hg38, chr_prefix)
-    
-    print("\nAll genes processed. SNPs extracted to gene_variants directory.")
+    print("\nAll VCF files processed. SNPs extracted to gene_variants directory.")
 
 if __name__ == "__main__":
     main()
