@@ -1,0 +1,5 @@
+/env
+/gene_variants
+*.gz
+*.csi
+*.DS_Store
