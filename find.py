@@ -223,26 +223,27 @@ def load_gene_info():
     genes = {
         "NPSR1": {
             "fasta": "assets/npsr1.fasta",
-            "hg19": {"chr": "7", "start": 34694197, "end": 34885439},
             "hg38": {"chr": "7", "start": 34658413, "end": 34849655},
             "strand": "+"
         },
         "ADRB1": {
             "fasta": "assets/adrb1.fasta",
-            "hg19": {"chr": "10", "start": 115804309, "end": 115805742},
             "hg38": {"chr": "10", "start": 114044133, "end": 114045566},
             "strand": "+"
         },
         "DEC2": {
             "fasta": "assets/dec2.fasta",
-            "hg19": {"chr": "12", "start": 26125956, "end": 26128669},
             "hg38": {"chr": "12", "start": 26122066, "end": 26124779},
             "strand": "-"
         },
         "GRM1": {
             "fasta": "assets/grm1.fasta",
-            "hg19": {"chr": "6", "start": 146755366, "end": 147160172},
             "hg38": {"chr": "6", "start": 146029518, "end": 146434796},
+            "strand": "+"
+        },
+         "PAX8": {
+            "fasta": "assets/pax8.fasta",
+            "hg38": {"chr": "2", "start": 113278370, "end": 113218609},
             "strand": "+"
         }
     }
