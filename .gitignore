@@ -1,5 +1,8 @@
 /env
+/vcfs
 /gene_variants
+**/*.bgz
+**/*.tsv
 *.gz
 *.csi
 *.DS_Store
