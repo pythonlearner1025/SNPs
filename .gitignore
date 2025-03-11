@@ -6,3 +6,7 @@
 *.gz
 *.csi
 *.DS_Store
+short_sleep_snp_finder
+short_sleep_snp_finder.cpp
+short_sleep_snps_filtered.txt
+short_sleep_snps_temp.txt
